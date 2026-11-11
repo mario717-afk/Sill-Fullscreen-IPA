@@ -1,0 +1,100 @@
+name: Build Sill Hide Top Bar IPA
+on:
+  push:
+    paths: ['.github/workflows/build-ipa.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: xcode-27
+    timeout-minutes: 35
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: addhumal/sill
+          ref: db131e935cf71c96d58d438b635ff02a1bed33cc
+          persist-credentials: false
+      - name: Select Xcode with iOS 27.1 SDK
+        run: |
+          python3 - <<'PY'
+          import glob, plistlib, subprocess, os
+          choices = []
+          for p in glob.glob('/Applications/Xcode*.app'):
+              try:
+                  with open(p + '/Contents/Info.plist','rb') as f:
+                      v = plistlib.load(f)['CFBundleShortVersionString']
+                  ver = tuple(int(x) for x in v.split('.'))
+                  if ver >= (27,1):
+                      choices.append((ver, 'beta' not in p.lower(), p))
+              except (OSError, KeyError, ValueError): pass
+          if not choices:
+              raise SystemExit('No Xcode >= 27.1 installed')
+          p = max(choices)[2]
+          subprocess.run(['sudo','xcode-select','--switch',p],check=True)
+          PY
+          xcodebuild -version
+          xcodebuild -showsdks
+      - name: Confirm experimental feature and source
+        run: |
+          git rev-parse HEAD
+          test "$(git rev-parse HEAD)" = db131e935cf71c96d58d438b635ff02a1bed33cc
+          rg 'Hide Top Bar' iOSClient/HostSettingsPanel.swift
+          rg 'hideTopBar|TopBarVisibility' iOSClient/StreamScreen.swift
+      - name: Build Release for iPhone without signing
+        run: |
+          xcodebuild -project iOSClient/Sill.xcodeproj -scheme Sill \
+            -configuration Release -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" ARCHS=arm64 build 2>&1 | tee "$RUNNER_TEMP/build.log"
+      - name: Package and verify real device app
+        run: |
+          mkdir -p "$RUNNER_TEMP/package/Payload" "$GITHUB_WORKSPACE/dist"
+          app="$RUNNER_TEMP/DerivedData/Build/Products/Release-iphoneos/Sill.app"
+          test -d "$app"
+          cp -R "$app" "$RUNNER_TEMP/package/Payload/"
+          cd "$RUNNER_TEMP/package"
+          /usr/bin/zip -qry "$GITHUB_WORKSPACE/dist/Sill-Hide-Top-Bar-UNSIGNED.ipa" Payload
+          cd "$GITHUB_WORKSPACE"
+          python3 - <<'PY' | tee dist/verification.txt
+          import zipfile, plistlib, struct, hashlib, pathlib
+          p = pathlib.Path('dist/Sill-Hide-Top-Bar-UNSIGNED.ipa')
+          with zipfile.ZipFile(p) as z:
+              assert z.testzip() is None
+              info = plistlib.loads(z.read('Payload/Sill.app/Info.plist'))
+              assert info['CFBundlePackageType'] == 'APPL'
+              assert info['CFBundleSupportedPlatforms'] == ['iPhoneOS']
+              binary = z.read('Payload/Sill.app/' + info['CFBundleExecutable'])
+              assert len(binary) > 100000
+              assert binary[:4] == bytes.fromhex('cffaedfe')
+              assert struct.unpack_from('<I',binary,4)[0] == 0x0100000c
+              assert struct.unpack_from('<I',binary,12)[0] == 2
+              assert b'Hide Top Bar' in binary
+              print('Verified: Payload/Sill.app; APPL; iPhoneOS; arm64 Mach-O executable; Hide Top Bar string.')
+              print('Bundle:',info['CFBundleIdentifier'])
+              print('Version:', info.get('CFBundleShortVersionString'), info.get('CFBundleVersion'))
+              print('Minimum iOS:',info.get('MinimumOSVersion'))
+              print('Executable bytes:',len(binary))
+              print('IPA bytes:',p.stat().st_size)
+              print('SHA256:',hashlib.sha256(p.read_bytes()).hexdigest())
+              print('Source: https://github.com/addhumal/sill/commit/db131e935cf71c96d58d438b635ff02a1bed33cc')
+              print('Unsigned. Requires signing with SideStore or another appropriate signing tool.')
+          PY
+          shasum -a 256 dist/*.ipa > dist/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Sill-Hide-Top-Bar-UNSIGNED
+          path: dist/
+          if-no-files-found: error
+      - name: Publish verified download
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release create "hide-top-bar-${{ github.run_id }}" dist/* \
+            --title "Sill Hide Top Bar (unsigned, db131e9)" \
+            --notes-file dist/verification.txt --prerelease
