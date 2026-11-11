@@ -42,8 +42,8 @@ jobs:
         run: |
           git rev-parse HEAD
           test "$(git rev-parse HEAD)" = db131e935cf71c96d58d438b635ff02a1bed33cc
-          rg 'Hide Top Bar' iOSClient/HostSettingsPanel.swift
-          rg 'hideTopBar|TopBarVisibility' iOSClient/StreamScreen.swift
+          grep -F 'Hide Top Bar' iOSClient/HostSettingsPanel.swift
+          grep -E 'hideTopBar|TopBarVisibility' iOSClient/StreamScreen.swift
       - name: Build Release for iPhone without signing
         run: |
           xcodebuild -project iOSClient/Sill.xcodeproj -scheme Sill \
