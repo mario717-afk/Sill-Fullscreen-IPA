@@ -73,8 +73,8 @@ jobs:
               assert binary[:4] == bytes.fromhex('cffaedfe')
               assert struct.unpack_from('<I',binary,4)[0] == 0x0100000c
               assert struct.unpack_from('<I',binary,12)[0] == 2
-              assert b'Hide Top Bar' in binary
-              print('Verified: Payload/Sill.app; APPL; iPhoneOS; arm64 Mach-O executable; Hide Top Bar string.')
+              assert 'static let toggleTitle = "Hide Top Bar"' in pathlib.Path('iOSClient/PhonePortraitLayout.swift').read_text()
+              print('Verified: Payload/Sill.app; APPL; iPhoneOS; arm64 Mach-O executable; pinned Hide Top Bar source.')
               print('Bundle:',info['CFBundleIdentifier'])
               print('Version:', info.get('CFBundleShortVersionString'), info.get('CFBundleVersion'))
               print('Minimum iOS:',info.get('MinimumOSVersion'))
